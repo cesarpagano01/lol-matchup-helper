@@ -5,12 +5,12 @@ services:
     environment:
       POSTGRES_USER: user
       POSTGRES_PASSWORD: password
-      POSTGRES_DB: dev_db
+      POSTGRES_DB: dev
     ports:
-      - "5432:5432"
+      - 5432:5432
     volumes:
       - ./app/init.sql:/docker-entrypoint-initdb.d/init.sql
-      - pgdata:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql
 
   app:
     build: .
@@ -18,8 +18,8 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - .:/usr/src
-      - /usr/src/node_modules
+      - server:/usr/src
+      - node_modules_data:/usr/src/node_modules
     env_file:
       - .env
     depends_on:
@@ -27,4 +27,5 @@ services:
 
 volumes:
   pgdata:
-
+  node_modules_data:
+  server:
