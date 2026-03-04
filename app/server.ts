@@ -28,22 +28,31 @@ app.get('/import', async (req, res) => {
     await database.transaction(async (trx) => {
       
       // Usando a "array" buscamos todos os status de uma vez sem precisar ficar "indo e vindo"
-      const statusToInsert = championsArray.map((champion: any) => ({
-        hp: champion.stats.hp,
-        hp_per_level: champion.stats.hpperlevel,
-        mana: champion.stats.mp,
-        mana_per_level: champion.stats.mpperlevel,
-        move_speed: champion.stats.movespeed,
-        armor: champion.stats.armor,
-        armor_per_level: champion.stats.armorperlevel,
-        spell_block: champion.stats.spellblock,
-        spell_block_per_level: champion.stats.spellblockperlevel,
-        attack_range: champion.stats.attackrange,
-        attack_damage: champion.stats.attackdamage,
-        attack_damage_per_level: champion.stats.attackdamageperlevel,
-        ability_power: 0,
-        cooldown_reduction: 0.0,
-      }));
+      const statusToInsert = championsArray.map((champion: any) => {
+        console.log(champion.stats)
+        if (!champion.stats || champion.stats.hp === undefined) {
+          console.log(`ACHEI O CULPADO! O campeão ${champion.name} veio sem HP.`)
+        }
+
+        return {
+          hp: champion.stats.hp,
+          hp_per_level: champion.stats.hpperlevel,
+          mana: champion.stats.mp,
+          mana_per_level: champion.stats.mpperlevel,
+          move_speed: champion.stats.movespeed,
+          armor: champion.stats.armor,
+          armor_per_level: champion.stats.armorperlevel,
+          spell_block: champion.stats.spellblock,
+          spell_block_per_level: champion.stats.spellblockperlevel,
+          attack_range: champion.stats.attackrange,
+          attack_damage: champion.stats.attackdamage,
+          attack_damage_per_level: champion.stats.attackdamageperlevel,
+          ability_power: 0,
+          cooldown_reduction: 0.0
+        }
+      });
+
+        console.log(statusToInsert)
 
       // Insere todos os status de uma vez e recupera os IDs gerados
       const insertedStatus = await trx('status')
@@ -81,18 +90,7 @@ app.get('/champions', async (request, response) => {
         'champions.icon',
         'status.ability_power',
         'status.attack_damage',
-        'status.cooldown_reduction',
-        'status.hp'
-        'status.hp_per_level'
-        'status.mana'
-        'status.mana_per_level'
-        'status.move_speed'
-        'armor'
-        'armor_per_level'
-        'spell_block'
-        'spell_block_per_level'
-        'attack_range'
-        'attack_damage_per_level'
+        'status.cooldown_reduction'
       ])
       .join('status', 'champions.status_id', 'status.status_id')
     return response.json(users);
