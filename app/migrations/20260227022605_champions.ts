@@ -6,7 +6,11 @@ export async function up(knex: Knex): Promise<void> {
     table.string('name').notNullable().unique()
     table.string('icon').nullable()
     table.jsonb('skins').defaultTo({}).notNullable()
-    table.uuid('status_id').references('status.status_id').nullable()
+    table.uuid('status_id')
+      .references('status_id')
+      .inTable('status')
+      .onDelete('CASCADE')
+      .notNullable();
     table.timestamps(true, true)
   })
 }
