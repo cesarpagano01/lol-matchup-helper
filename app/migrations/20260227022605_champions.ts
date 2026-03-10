@@ -11,6 +11,7 @@ export async function up(knex: Knex): Promise<void> {
       .inTable('status')
       .onDelete('CASCADE')
       .notNullable();
+    table.string('patch').notNullable()
     table.timestamps(true, true)
   })
 }
