@@ -17,6 +17,7 @@ export async function up(knex: Knex): Promise<void> {
     table.double('spell_block', 6, 3).notNullable()
     table.double('spell_block_per_level', 6, 3).notNullable()
     table.double('attack_damage_per_level', 6, 3).notNullable()
+    table.string('patch').notNullable()
     table.timestamps(true, true)
   })
 }
