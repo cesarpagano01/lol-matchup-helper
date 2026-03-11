@@ -5,172 +5,133 @@ import cron from 'node-cron'
 const app = express()
 app.use(express.json())
 
-// --- FUNÇÃO DE ATUALIZAÇÃO REUTILIZÁVEL ---
 async function updateRiotData() {
-  console.log(`[${new Date().toISOString()}] Iniciando processo de atualização...`);
+  console.log(`[${new Date().toISOString()}] Iniciando processo de atualização...`)
 
   try {
-    // 1. Busca configurações básicas
-    const config = await database('config').select('key', 'value');
-    const getConfig = (key: string) => config.find(c => c.key === key)?.value;
+    await fetchLatestPatchVersionFromLeagueApiAndSaveToDatabase()
+    const { PATCH_VERSION: patch, LANGUAGE: language }: any = getPatchAndLanguageFromConfigs()
 
-    const currentPatch = getConfig('PATCH_VERSION') || '16.5.1';
-    const language = getConfig('LANGUAGE') || 'pt_BR';
+    const championsFromDdragon: any[] = await fetchChampionsDataFromLeagueApiAndReturnChampionsArray(patch, language)
 
-    // 2. Busca a versão mais recente da Riot
-    const vRes = await fetch('https://ddragon.leagueoflegends.com/api/versions.json');
-    const versions = await vRes.json();
-    const latestVersion = versions[0];
+    await upsertChampionsWithinTransaction(championsFromDdragon, patch)
 
-    // 3. Busca dados dos campeões
-    const response = await fetch(`https://ddragon.leagueoflegends.com/cdn/${latestVersion}/data/${language}/champion.json`);
-    if (!response.ok) throw new Error('Falha ao buscar dados da Riot');
+    return championsFromDdragon.length
+  } catch (error) {
+    console.error('Erro no processo de atualização:', error)
+    throw error
+  }
+}
 
-    const data: any = await response.json();
-    const championsArray = Object.values(data.data);
+async function upsertChampionsWithinTransaction(championsArray: any[], patch: string) {
+  await database.transaction(async (trx) => {
+    for (const champion of championsArray) {
+      const iconUrl = `https://ddragon.leagueoflegends.com/cdn/${patch}/img/champion/${champion.id}.png`
 
-    // Início da Transação para garantir segurança dos dados
-    await database.transaction(async (trx) => {
-      for (const champion of championsArray as any[]) {
-        
-        const existingChamp = await trx('champions')
-          .where('name', champion.name)
-          .first();
-
-        if (existingChamp) {
-          // --- LOGICA DE COMPARAÇÃO E UPDATE ---
-          const currentStatus = await trx('status')
-            .where('status_id', existingChamp.status_id)
-            .first();
-
-          const newStats = {
-            hp: champion.stats.hp,
-            hp_per_level: champion.stats.hpperlevel,
-            mana: champion.stats.mp,
-            mana_per_level: champion.stats.mpperlevel,
-            move_speed: champion.stats.movespeed,
-            armor: champion.stats.armor,
-            armor_per_level: champion.stats.armorperlevel,
-            spell_block: champion.stats.spellblock,
-            spell_block_per_level: champion.stats.spellblockperlevel,
-            attack_range: champion.stats.attackrange,
-            attack_damage: champion.stats.attackdamage,
-            attack_damage_per_level: champion.stats.attackdamageperlevel,
-          };
-
-          // Verifica se algo mudou nos status
-          const statsChanged = Object.keys(newStats).some(
-            (key) => (currentStatus as any)[key] !== (newStats as any)[key]
-          );
-
-          // Verifica se o ícone mudou
-          const newIcon = `https://ddragon.leagueoflegends.com/cdn/${latestVersion}/img/champion/${champion.id}.png`;
-          const iconChanged = existingChamp.icon !== newIcon;
-
-          if (statsChanged || iconChanged) {
-            console.log(`[UPDATE] Mudança em ${champion.name}. Gerando histórico...`);
-
-            // 1. Salva histórico
-            await trx('champion_history').insert({
-              champion_id: existingChamp.champion_id,
-              champion_history: JSON.stringify({
-                status_anteriores: currentStatus,
-                icon_anterior: existingChamp.icon
-              }),
-              patch: existingChamp.patch
-            });
-
-            // 2. Atualiza Status
-            await trx('status')
-              .where('status_id', existingChamp.status_id)
-              .update({
-                ...newStats,
-                patch: latestVersion
-              });
-
-            // 3. Atualiza Campeão
-            await trx('champions')
-              .where('champion_id', existingChamp.champion_id)
-              .update({
-                icon: newIcon,
-                patch: latestVersion
-              });
-          } else {
-            // Se não mudou nada, apenas atualiza a marcação de patch
-            await trx('champions').where('champion_id', existingChamp.champion_id).update({ patch: latestVersion });
-            await trx('status').where('status_id', existingChamp.status_id).update({ patch: latestVersion });
-          }
-
-        } else {
-          // --- SE O CAMPEÃO FOR NOVO (INSERT) ---
-          const [newStatus] = await trx('status').insert({
-            hp: champion.stats.hp,
-            hp_per_level: champion.stats.hpperlevel,
-            mana: champion.stats.mp,
-            mana_per_level: champion.stats.mpperlevel,
-            move_speed: champion.stats.movespeed,
-            armor: champion.stats.armor,
-            armor_per_level: champion.stats.armorperlevel,
-            spell_block: champion.stats.spellblock,
-            spell_block_per_level: champion.stats.spellblockperlevel,
-            attack_range: champion.stats.attackrange,
-            attack_damage: champion.stats.attackdamage,
-            attack_damage_per_level: champion.stats.attackdamageperlevel,
-            ability_power: 0,
-            cooldown_reduction: 0.0,
-            patch: latestVersion
-          }).returning('status_id');
-
-          const sId = (newStatus as any).status_id || newStatus;
-
-          await trx('champions').insert({
-            name: champion.name,
-            icon: `https://ddragon.leagueoflegends.com/cdn/${latestVersion}/img/champion/${champion.id}.png`,
-            status_id: sId,
-            patch: latestVersion
-          });
-        }
+      const statusObjectToUpsert = {
+        hp: champion.stats.hp,
+        hp_per_level: champion.stats.hpperlevel,
+        mana: champion.stats.mp,
+        mana_per_level: champion.stats.mpperlevel,
+        move_speed: champion.stats.movespeed,
+        armor: champion.stats.armor,
+        armor_per_level: champion.stats.armorperlevel,
+        spell_block: champion.stats.spellblock,
+        spell_block_per_level: champion.stats.spellblockperlevel,
+        attack_range: champion.stats.attackrange,
+        attack_damage: champion.stats.attackdamage,
+        attack_damage_per_level: champion.stats.attackdamageperlevel,
+        patch: patch
       }
 
-      // Finaliza atualizando a versão global
-      await trx('config')
-        .where('key', 'PATCH_VERSION')
-        .update({ value: latestVersion });
-    });
+      const [status] = await trx('status')
+        .insert(statusObjectToUpsert)
+        .onConflict('status_id')
+        .merge(statusObjectToUpsert)
+        .returning('status_id')
 
-    return championsArray.length;
-  } catch (error) {
-    console.error('Erro no processo de atualização:', error);
-    throw error;
+      const championObjectToUpsert = {
+        name: champion.name,
+        icon: iconUrl,
+        patch: patch,
+        status_id: status.status_id
+      }
+
+      await trx('champions')
+        .insert(championObjectToUpsert)
+        .onConflict('champion_id')
+        .merge(championObjectToUpsert)
+    }
+  })
+}
+
+async function fetchLatestPatchVersionFromLeagueApiAndSaveToDatabase() {
+  const response = await fetch('https://ddragon.leagueoflegends.com/api/versions.json')
+  const [versions]: any = await response.json()
+  const latestVersion = versions
+
+  await database('config')
+    .where('key', 'PATCH_VERSION')
+    .update({ value: latestVersion })
+}
+
+// isso aqui, vai ficar dentro de um arquivo "client da ddragon, do lol, tanto faz" (Entender como funciona uma classe)
+async function fetchChampionsDataFromLeagueApiAndReturnChampionsArray(patch: any, language: any): Promise<any[]> {
+  const response = await fetch(`https://ddragon.leagueoflegends.com/cdn/${patch}/data/${language}/champion.json`)
+  if (!response.ok) {
+    throw new Error('Falha ao buscar dados da Riot')
   }
+
+  const data: any = await response.json()
+  return Object.values(data.data)
+}
+
+// vai vicar dentro de um arquivo "helper"
+async function getPatchAndLanguageFromConfigs() {
+  const configs = await database('config')
+    .select('key', 'value')
+    .whereIn('key', ['PATCH_VERSION', 'LANGUAGE'])
+  // const configs = [ { key: "PATCH_VERSION", value: '1.0' }, { key: 'LANGUAGE', value: 'pt_BR' } ]
+
+  return configs.reduce(
+    (result, config) => {
+      // config = { key: "PATCH_VERSION", value: '1.0' }
+      // result = eu declarei ali em baixo que é um {} objeto vazio!
+
+      result[config.key] = config.value
+      return result
+    },
+    {} // declarei aqui
+  )
+  // result = { "PATCH_VERSION": '1.0', "LANGUAGE": 'pt_BR' }
 }
 
 // --- CRON JOB ---
 cron.schedule('0 12 * * 3', async () => {
-  await updateRiotData();
-});
+  await updateRiotData()
+})
 
 // --- ROTAS ---
 app.get('/import', async (req, res) => {
   try {
-    const count = await updateRiotData();
-    return res.status(200).json({ message: 'Processado com sucesso!', count });
+    const count = await updateRiotData()
+    return res.status(200).json({ message: 'Processado com sucesso!', count })
   } catch (error) {
-    return res.status(500).json({ error: 'Erro na importação' });
+    return res.status(500).json({ error: 'Erro na importação' })
   }
-});
+})
 
 app.get('/champions', async (req, res) => {
   try {
     const data = await database('champions')
       .select('champions.name', 'champions.icon', 'status.hp', 'status.attack_damage')
-      .join('status', 'champions.status_id', 'status.status_id');
-    return res.json(data);
+      .join('status', 'champions.status_id', 'status.status_id')
+    return res.json(data)
   } catch (error) {
-    return res.status(500).json({ error: 'Erro ao buscar' });
+    return res.status(500).json({ error: 'Erro ao buscar' })
   }
-});
+})
 
 app.listen(3000, () => {
-  console.log(`Server rodando em http://localhost:3000 - ${new Date()}`);
-});
+  console.log(`Server rodando em http://localhost:3000 - ${new Date()}`)
+})
