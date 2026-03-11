@@ -1,6 +1,5 @@
 import type { Knex } from "knex";
 
-
 export async function up(knex: Knex): Promise<void> {
     return knex.schema.createTable('config', (table) => {
         table.uuid('config_id').primary().defaultTo(knex.raw('uuid_generate_v4()'))
@@ -10,7 +9,5 @@ export async function up(knex: Knex): Promise<void> {
 
 }
 
-
 export async function down(knex: Knex): Promise<void> {
 }
-
